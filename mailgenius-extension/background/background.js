@@ -9,8 +9,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     handleEmailAnalysis(request.emailData).then(analysis => {
       currentEmailAnalysis = analysis;
       
-      // Open popup to show analysis
-      chrome.action.openPopup();
+      // Store analysis and notify content script
+      chrome.storage.local.set({ lastAnalysis: analysis });
       
       sendResponse({ success: true, analysis });
     }).catch(error => {
@@ -38,14 +38,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // Analyze email using AI
 async function handleEmailAnalysis(emailData) {
-  const settings = await chrome.storage.sync.get(['apiKey', 'apiProvider', 'modelName']);
+  // Hardcoded Gemini API configuration
+  const settings = {
+    apiKey: 'AIzaSyDYmsliWOPYGhzWeadTitSWQSkVhl8nICM',
+    apiProvider: 'gemini',
+    modelName: 'gemini-2.5-flash'
+  };
   
-  if (!settings.apiKey) {
-    throw new Error('API key not configured. Please set it in the options page.');
-  }
-
-  const provider = settings.apiProvider || 'openai';
-  const model = settings.modelName || 'gpt-4o-mini';
+  const provider = settings.apiProvider;
+  const model = settings.modelName;
 
   const analysisPrompt = `Analyze this email and provide:
 1. Priority level (High/Medium/Low) with reasoning
@@ -75,17 +76,52 @@ Respond in JSON format:
 
   const analysis = await callAI(analysisPrompt, provider, settings.apiKey, model);
   
-  // Parse JSON response
+  // Parse JSON response with better error handling
   let parsedAnalysis;
   try {
     parsedAnalysis = JSON.parse(analysis);
   } catch (e) {
-    // If not valid JSON, extract JSON from markdown code blocks
-    const jsonMatch = analysis.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
+    // Try to extract JSON from markdown code blocks
+    const jsonMatch = analysis.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
     if (jsonMatch) {
-      parsedAnalysis = JSON.parse(jsonMatch[1]);
+      try {
+        parsedAnalysis = JSON.parse(jsonMatch[1]);
+      } catch (e2) {
+        console.error('Failed to parse JSON from code block:', jsonMatch[1]);
+        throw new Error('Failed to parse AI response from code block');
+      }
     } else {
-      throw new Error('Failed to parse AI response');
+      // Try to find JSON object in the text
+      const objectMatch = analysis.match(/\{[\s\S]*"priority"[\s\S]*\}/);
+      if (objectMatch) {
+        try {
+          parsedAnalysis = JSON.parse(objectMatch[0]);
+        } catch (e3) {
+          console.error('Failed to parse JSON object:', objectMatch[0]);
+          // Create default structure from text
+          parsedAnalysis = {
+            priority: "Medium",
+            priorityReason: "Unable to analyze",
+            senderImportance: "Medium",
+            importanceReason: "Unable to determine",
+            summary: analysis.substring(0, 200),
+            actionItems: [],
+            categories: ["Email"]
+          };
+        }
+      } else {
+        console.error('No JSON found in response:', analysis);
+        // Create default structure
+        parsedAnalysis = {
+          priority: "Medium",
+          priorityReason: "AI response format error",
+          senderImportance: "Medium",
+          importanceReason: "Could not parse response",
+          summary: "Error processing email analysis",
+          actionItems: [],
+          categories: ["Email"]
+        };
+      }
     }
   }
 
@@ -97,14 +133,15 @@ Respond in JSON format:
 
 // Generate reply using AI
 async function handleReplyGeneration(emailData, replyType) {
-  const settings = await chrome.storage.sync.get(['apiKey', 'apiProvider', 'modelName']);
+  // Hardcoded Gemini API configuration
+  const settings = {
+    apiKey: 'AIzaSyDYmsliWOPYGhzWeadTitSWQSkVhl8nICM',
+    apiProvider: 'gemini',
+    modelName: 'gemini-2.5-flash'
+  };
   
-  if (!settings.apiKey) {
-    throw new Error('API key not configured. Please set it in the options page.');
-  }
-
-  const provider = settings.apiProvider || 'openai';
-  const model = settings.modelName || 'gpt-4o-mini';
+  const provider = settings.apiProvider;
+  const model = settings.modelName;
 
   const replyPrompts = {
     professional: 'Write a professional and formal reply',
@@ -208,7 +245,9 @@ async function callAnthropic(prompt, apiKey, model) {
 
 // Google Gemini API
 async function callGemini(prompt, apiKey, model) {
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+  // Ensure model has the correct format
+  const modelPath = model.startsWith('models/') ? model : `models/${model}`;
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${modelPath}:generateContent?key=${apiKey}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -225,16 +264,39 @@ async function callGemini(prompt, apiKey, model) {
       ],
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 1000
+        maxOutputTokens: 2048
       }
     })
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error?.message || 'Gemini API request failed');
+    const errorText = await response.text();
+    console.error('Gemini API error:', errorText);
+    throw new Error(`Gemini API request failed: ${errorText}`);
   }
 
   const data = await response.json();
-  return data.candidates[0].content.parts[0].text;
+  
+  console.log('Gemini API response:', JSON.stringify(data, null, 2));
+  
+  // Handle different response structures
+  if (data.candidates && data.candidates.length > 0) {
+    const candidate = data.candidates[0];
+    
+    // Check if response was cut off due to token limit
+    if (candidate.finishReason === 'MAX_TOKENS') {
+      console.warn('Response hit max tokens limit');
+    }
+    
+    if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
+      const text = candidate.content.parts[0].text;
+      if (text) {
+        return text;
+      }
+    }
+  }
+  
+  // If we get here, the response structure is unexpected
+  console.error('Unexpected Gemini response structure:', data);
+  throw new Error('No text content in Gemini response. Check console for details.');
 }

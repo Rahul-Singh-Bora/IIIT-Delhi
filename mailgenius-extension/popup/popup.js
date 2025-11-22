@@ -5,10 +5,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const copyReplyBtn = document.getElementById('copyReplyBtn');
   const retryBtn = document.getElementById('retryBtn');
 
-  // Get current analysis
-  chrome.runtime.sendMessage({ action: 'getAnalysis' }, (response) => {
-    if (response.analysis) {
-      displayAnalysis(response.analysis);
+  // Get all analyzed emails from storage
+  chrome.storage.local.get(['allEmailAnalyses', 'lastAnalysisTime'], (result) => {
+    if (result.allEmailAnalyses && result.allEmailAnalyses.length > 0) {
+      displayAllAnalyses(result.allEmailAnalyses, result.lastAnalysisTime);
     } else {
       showNoEmailState();
     }
@@ -47,63 +47,98 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 });
 
-function displayAnalysis(analysis) {
+function displayAllAnalyses(analyses, lastAnalysisTime) {
   hideAllStates();
   document.getElementById('analysisView').style.display = 'block';
+  document.getElementById('analysisView').innerHTML = `
+    <div class="analysis-header">
+      <h2>📧 Latest ${analyses.length} Emails Analyzed</h2>
+      <p class="last-updated">Last updated: ${formatDate(new Date(lastAnalysisTime))}</p>
+    </div>
+    <div class="email-list" id="emailList"></div>
+  `;
+  
+  const emailList = document.getElementById('emailList');
+  
+  analyses.forEach((analysis, index) => {
+    const { emailData, priority, senderImportance, summary } = analysis;
+    
+    const emailCard = document.createElement('div');
+    emailCard.className = 'email-card';
+    emailCard.innerHTML = `
+      <div class="email-card-header">
+        <div class="email-sender">${emailData.senderName}</div>
+        <div class="badge-group">
+          <span class="badge badge-${priority.toLowerCase()}">${priority}</span>
+          <span class="badge badge-${senderImportance.toLowerCase()}">${senderImportance}</span>
+        </div>
+      </div>
+      <div class="email-subject">${emailData.subject}</div>
+      <div class="email-summary">${summary}</div>
+      <div class="email-date">${formatDate(emailData.date)}</div>
+    `;
+    
+    emailCard.addEventListener('click', () => {
+      displaySingleAnalysis(analysis);
+    });
+    
+    emailList.appendChild(emailCard);
+  });
+}
 
+function displaySingleAnalysis(analysis) {
+  hideAllStates();
+  document.getElementById('analysisView').style.display = 'block';
+  
   const { emailData, priority, priorityReason, senderImportance, importanceReason, summary, actionItems, categories } = analysis;
-
-  // Email info
-  document.getElementById('senderName').textContent = emailData.senderName;
-  document.getElementById('emailDate').textContent = formatDate(emailData.date);
-  document.getElementById('emailSubject').textContent = emailData.subject;
-
-  // Priority badge
-  const priorityBadge = document.getElementById('priorityBadge');
-  priorityBadge.textContent = `${priority} Priority`;
-  priorityBadge.className = `badge badge-${priority.toLowerCase()}`;
-
-  // Importance badge
-  const importanceBadge = document.getElementById('importanceBadge');
-  importanceBadge.textContent = `${senderImportance} Importance`;
-  importanceBadge.className = `badge badge-${senderImportance.toLowerCase()}`;
-
-  // Reasons
-  document.getElementById('priorityReason').textContent = `${priorityReason} ${importanceReason}`;
-
-  // Summary
-  document.getElementById('emailSummary').textContent = summary;
-
-  // Action items
-  if (actionItems && actionItems.length > 0) {
-    const actionItemsSection = document.getElementById('actionItemsSection');
-    const actionItemsList = document.getElementById('actionItemsList');
-    actionItemsSection.style.display = 'block';
-    actionItemsList.innerHTML = '';
+  
+  document.getElementById('analysisView').innerHTML = `
+    <button class="back-btn" id="backBtn">← Back to List</button>
+    <div class="email-info">
+      <div class="email-header">
+        <span class="sender-name">${emailData.senderName}</span>
+        <span class="email-date">${formatDate(emailData.date)}</span>
+      </div>
+      <div class="email-subject">${emailData.subject}</div>
+    </div>
     
-    actionItems.forEach(item => {
-      const li = document.createElement('li');
-      li.textContent = item;
-      actionItemsList.appendChild(li);
-    });
-  }
-
-  // Categories
-  if (categories && categories.length > 0) {
-    const categoriesSection = document.getElementById('categoriesSection');
-    const categoriesList = document.getElementById('categoriesList');
-    categoriesSection.style.display = 'block';
-    categoriesList.innerHTML = '';
+    <div class="analysis-section">
+      <h3>Priority Analysis</h3>
+      <div class="badge-container">
+        <span class="badge badge-${priority.toLowerCase()}">${priority} Priority</span>
+        <span class="badge badge-${senderImportance.toLowerCase()}">${senderImportance} Importance</span>
+      </div>
+      <p class="reason">${priorityReason} ${importanceReason}</p>
+    </div>
     
-    categories.forEach(category => {
-      const tag = document.createElement('span');
-      tag.className = 'tag';
-      tag.textContent = category;
-      categoriesList.appendChild(tag);
+    <div class="analysis-section">
+      <h3>Summary</h3>
+      <p>${summary}</p>
+    </div>
+    
+    ${actionItems && actionItems.length > 0 ? `
+      <div class="analysis-section">
+        <h3>Action Items</h3>
+        <ul>${actionItems.map(item => `<li>${item}</li>`).join('')}</ul>
+      </div>
+    ` : ''}
+    
+    ${categories && categories.length > 0 ? `
+      <div class="analysis-section">
+        <h3>Categories</h3>
+        <div class="tag-container">
+          ${categories.map(cat => `<span class="tag">${cat}</span>`).join('')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+  
+  document.getElementById('backBtn').addEventListener('click', () => {
+    chrome.storage.local.get(['allEmailAnalyses', 'lastAnalysisTime'], (result) => {
+      displayAllAnalyses(result.allEmailAnalyses, result.lastAnalysisTime);
     });
-  }
-
-  // Store email data for reply generation
+  });
+  
   window.currentEmailData = emailData;
 }
 

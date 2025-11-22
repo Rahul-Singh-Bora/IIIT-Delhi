@@ -1,8 +1,9 @@
-// MailGenius Content Script - Injects AI analysis into Gmail
+// MailGenius Content Script - Auto-analyzes latest emails
 console.log('MailGenius: Content script loaded');
 
 let currentEmailData = null;
 let analyzeButton = null;
+let isAnalyzing = false;
 
 // Wait for Gmail to load
 function waitForGmail() {
@@ -17,8 +18,13 @@ function waitForGmail() {
 }
 
 function initialize() {
-  // Monitor for email opens
-  observeEmailChanges();
+  console.log('MailGenius: Initialization started');
+  
+  // Auto-analyze latest 20 emails when Gmail loads
+  setTimeout(() => {
+    console.log('MailGenius: Starting auto-analysis timer...');
+    autoAnalyzeEmails();
+  }, 5000); // Wait 5 seconds for Gmail to fully load
   
   // Listen for messages from background script
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -28,72 +34,112 @@ function initialize() {
     }
     return true;
   });
+  
+  console.log('MailGenius: Initialization complete');
 }
 
-// Observe DOM changes to detect when user opens an email
-function observeEmailChanges() {
-  const observer = new MutationObserver((mutations) => {
-    // Check if an email is currently open
-    const emailContainer = document.querySelector('[role="main"] [data-message-id]');
-    if (emailContainer && !analyzeButton) {
-      injectAnalyzeButton();
-    }
-  });
-
-  const mainView = document.querySelector('[role="main"]');
-  if (mainView) {
-    observer.observe(mainView, {
-      childList: true,
-      subtree: true
-    });
+// Auto-analyze latest 20 emails
+async function autoAnalyzeEmails() {
+  if (isAnalyzing) {
+    console.log('MailGenius: Already analyzing, skipping...');
+    return;
   }
+  isAnalyzing = true;
+  
+  console.log('MailGenius: Starting auto-analysis of latest 20 emails...');
+  
+  // Find all email rows in inbox - try multiple selectors
+  let emailRows = document.querySelectorAll('tr.zA');
+  
+  if (emailRows.length === 0) {
+    console.log('MailGenius: No emails found with tr.zA, trying alternative selectors...');
+    emailRows = document.querySelectorAll('table.F.cf.zt tr');
+  }
+  
+  const emailsToAnalyze = Array.from(emailRows).slice(0, 20);
+  
+  console.log(`MailGenius: Found ${emailsToAnalyze.length} emails to analyze`);
+  
+  if (emailsToAnalyze.length === 0) {
+    console.log('MailGenius: No emails found! Check if you are in inbox view.');
+    isAnalyzing = false;
+    return;
+  }
+  
+  const analyses = [];
+  
+  for (let i = 0; i < emailsToAnalyze.length; i++) {
+    const row = emailsToAnalyze[i];
+    const emailData = extractEmailFromRow(row, i);
+    
+    if (emailData) {
+      console.log(`Analyzing email ${i + 1}/${emailsToAnalyze.length}:`, emailData.subject);
+      
+      try {
+        // Send to background for analysis
+        const response = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            action: 'analyzeEmail',
+            emailData: emailData
+          }, resolve);
+        });
+        
+        if (response && response.success) {
+          analyses.push(response.analysis);
+        }
+      } catch (error) {
+        console.error('Error analyzing email:', error);
+      }
+      
+      // Small delay between requests to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+  
+  // Store all analyses
+  chrome.storage.local.set({ 
+    allEmailAnalyses: analyses,
+    lastAnalysisTime: Date.now()
+  });
+  
+  console.log(`MailGenius: Completed analysis of ${analyses.length} emails`);
+  isAnalyzing = false;
 }
 
-// Inject "Analyze Email" button into Gmail sidebar
-function injectAnalyzeButton() {
-  // Find the email toolbar area
-  const toolbar = document.querySelector('[role="main"] [role="toolbar"]');
-  
-  if (!toolbar || analyzeButton) return;
-
-  // Create analyze button
-  analyzeButton = document.createElement('button');
-  analyzeButton.id = 'mailgenius-analyze-btn';
-  analyzeButton.innerHTML = `
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM7 11.5v-7h2v7H7zm0 2v-1h2v1H7z"/>
-    </svg>
-    <span>Analyze with AI</span>
-  `;
-  analyzeButton.className = 'mailgenius-btn';
-  
-  analyzeButton.addEventListener('click', async () => {
-    analyzeButton.disabled = true;
-    analyzeButton.innerHTML = '<span>Analyzing...</span>';
+// Extract email data from inbox row
+function extractEmailFromRow(row, index) {
+  try {
+    // Get sender name
+    const senderElement = row.querySelector('.yW span[email]') || row.querySelector('.yX.xY span');
+    const sender = senderElement ? senderElement.getAttribute('email') || senderElement.textContent : 'Unknown';
+    const senderName = row.querySelector('.yW span[name]')?.getAttribute('name') || 
+                       row.querySelector('.yX.xY')?.textContent || 'Unknown';
     
-    const emailData = extractEmailContent();
+    // Get subject
+    const subjectElement = row.querySelector('.y6 span') || row.querySelector('.bog span');
+    const subject = subjectElement ? subjectElement.textContent.trim() : 'No Subject';
     
-    // Send to background script for AI processing
-    chrome.runtime.sendMessage({
-      action: 'analyzeEmail',
-      emailData: emailData
-    }, (response) => {
-      analyzeButton.disabled = false;
-      analyzeButton.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zM7 11.5v-7h2v7H7zm0 2v-1h2v1H7z"/>
-        </svg>
-        <span>Analyze with AI</span>
-      `;
-    });
-  });
-
-  // Insert button into toolbar
-  const buttonContainer = document.createElement('div');
-  buttonContainer.className = 'mailgenius-btn-container';
-  buttonContainer.appendChild(analyzeButton);
-  
-  toolbar.appendChild(buttonContainer);
+    // Get preview/snippet
+    const snippetElement = row.querySelector('.y2');
+    const body = snippetElement ? snippetElement.textContent.trim() : '';
+    
+    // Get date
+    const dateElement = row.querySelector('.xW.xY span');
+    const date = dateElement ? dateElement.getAttribute('title') || dateElement.textContent : new Date().toISOString();
+    
+    return {
+      sender,
+      senderName,
+      subject,
+      body,
+      date,
+      timestamp: Date.now(),
+      rowIndex: index
+    };
+  } catch (error) {
+    console.error('Error extracting email from row:', error);
+    return null;
+  }
 }
 
 // Extract email content from Gmail DOM
