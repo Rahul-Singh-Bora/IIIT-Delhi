@@ -1,4 +1,4 @@
-// MailGenius Options Script
+// SortIQ Options Script
 document.addEventListener('DOMContentLoaded', async () => {
   const form = document.getElementById('settingsForm');
   const apiProviderRadios = document.querySelectorAll('input[name="apiProvider"]');

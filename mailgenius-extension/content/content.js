@@ -1,5 +1,5 @@
-// MailGenius Content Script - Auto-analyzes latest emails
-console.log('MailGenius: Content script loaded');
+// SortIQ Content Script - Auto-analyzes latest emails
+console.log('SortIQ: Content script loaded');
 
 let currentEmailData = null;
 let analyzeButton = null;
@@ -11,18 +11,18 @@ function waitForGmail() {
     const emailView = document.querySelector('[role="main"]');
     if (emailView) {
       clearInterval(checkInterval);
-      console.log('MailGenius: Gmail loaded, initializing...');
+      console.log('SortIQ: Gmail loaded, initializing...');
       initialize();
     }
   }, 1000);
 }
 
 function initialize() {
-  console.log('MailGenius: Initialization started');
+  console.log('SortIQ: Initialization started');
   
   // Auto-analyze latest 20 emails when Gmail loads
   setTimeout(() => {
-    console.log('MailGenius: Starting auto-analysis timer...');
+    console.log('SortIQ: Starting auto-analysis timer...');
     autoAnalyzeEmails();
   }, 5000); // Wait 5 seconds for Gmail to fully load
   
@@ -35,65 +35,82 @@ function initialize() {
     return true;
   });
   
-  console.log('MailGenius: Initialization complete');
+  console.log('SortIQ: Initialization complete');
 }
 
 // Auto-analyze latest 20 emails
 async function autoAnalyzeEmails() {
   if (isAnalyzing) {
-    console.log('MailGenius: Already analyzing, skipping...');
+    console.log('SortIQ: Already analyzing, skipping...');
     return;
   }
   isAnalyzing = true;
   
-  console.log('MailGenius: Starting auto-analysis of latest 20 emails...');
+  console.log('SortIQ: Starting auto-analysis of latest 10 emails...');
   
   // Find all email rows in inbox - try multiple selectors
   let emailRows = document.querySelectorAll('tr.zA');
   
   if (emailRows.length === 0) {
-    console.log('MailGenius: No emails found with tr.zA, trying alternative selectors...');
+    console.log('SortIQ: No emails found with tr.zA, trying alternative selectors...');
     emailRows = document.querySelectorAll('table.F.cf.zt tr');
   }
   
-  const emailsToAnalyze = Array.from(emailRows).slice(0, 20);
+  const emailsToAnalyze = Array.from(emailRows).slice(0, 10);
   
-  console.log(`MailGenius: Found ${emailsToAnalyze.length} emails to analyze`);
+  console.log(`SortIQ: Found ${emailsToAnalyze.length} emails to analyze`);
   
   if (emailsToAnalyze.length === 0) {
-    console.log('MailGenius: No emails found! Check if you are in inbox view.');
+    console.log('SortIQ: No emails found! Check if you are in inbox view.');
     isAnalyzing = false;
     return;
   }
   
+  // Analyze emails with rate limit: max 5 at a time to stay under 10/min limit
+  const BATCH_SIZE = 5;
   const analyses = [];
   
-  for (let i = 0; i < emailsToAnalyze.length; i++) {
-    const row = emailsToAnalyze[i];
-    const emailData = extractEmailFromRow(row, i);
+  for (let i = 0; i < emailsToAnalyze.length; i += BATCH_SIZE) {
+    const batch = emailsToAnalyze.slice(i, i + BATCH_SIZE);
+    console.log(`📧 Analyzing emails ${i + 1}-${Math.min(i + BATCH_SIZE, emailsToAnalyze.length)} of ${emailsToAnalyze.length}...`);
     
-    if (emailData) {
-      console.log(`Analyzing email ${i + 1}/${emailsToAnalyze.length}:`, emailData.subject);
+    const batchPromises = batch.map((row, batchIndex) => {
+      const emailData = extractEmailFromRow(row, i + batchIndex);
       
-      try {
-        // Send to background for analysis
-        const response = await new Promise((resolve) => {
+      if (emailData) {
+        console.log(`  • ${emailData.subject.substring(0, 50)}...`);
+        
+        return new Promise((resolve) => {
           chrome.runtime.sendMessage({
             action: 'analyzeEmail',
             emailData: emailData
-          }, resolve);
+          }, (response) => {
+            if (response && response.success) {
+              resolve(response.analysis);
+            } else {
+              console.error('❌ Analysis failed:', response?.error);
+              console.error('Full response:', response);
+              console.error('Email subject:', emailData?.subject);
+              if (chrome.runtime.lastError) {
+                console.error('Chrome runtime error:', chrome.runtime.lastError);
+              }
+              // Log background console tip
+              console.log('%c💡 TIP: Check service worker console at brave://extensions/ → "Inspect views: service worker"', 'color: orange; font-weight: bold');
+              resolve(null);
+            }
+          });
         });
-        
-        if (response && response.success) {
-          analyses.push(response.analysis);
-        }
-      } catch (error) {
-        console.error('Error analyzing email:', error);
       }
-      
-      // Small delay between requests to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
+      return Promise.resolve(null);
+    });
+    
+    // Wait for batch to complete
+    const batchResults = await Promise.all(batchPromises);
+    analyses.push(...batchResults.filter(a => a !== null));
+    
+    // Delay to respect rate limits - shorter delay for 10 emails
+    console.log('⏳ Waiting to respect API rate limits...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
   }
   
   // Store all analyses
@@ -102,7 +119,7 @@ async function autoAnalyzeEmails() {
     lastAnalysisTime: Date.now()
   });
   
-  console.log(`MailGenius: Completed analysis of ${analyses.length} emails`);
+  console.log(`✓ SortIQ: Completed analysis of ${analyses.length} emails!`);
   isAnalyzing = false;
 }
 

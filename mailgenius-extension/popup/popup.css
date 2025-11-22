@@ -1,4 +1,4 @@
-/* MailGenius Popup Styles */
+/* SortIQ Popup Styles */
 
 * {
   margin: 0;
@@ -463,6 +463,121 @@ header h1 {
 
 .back-btn:hover {
   background: #e2e8f0;
+  color: #667eea;
+}
+
+/* Reply Section in Detail View */
+.reply-section {
+  background: #f7fafc;
+  padding: 16px;
+  border-radius: 8px;
+  margin-top: 20px;
+}
+
+.reply-section h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #2d3748;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reply-section h3 svg {
+  color: #667eea;
+}
+
+.button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.reply-btn {
+  flex: 1;
+  min-width: 90px;
+  padding: 10px 16px;
+  background: white;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  color: #4a5568;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.reply-btn:hover {
+  border-color: #667eea;
+  color: #667eea;
+  transform: translateY(-1px);
+}
+
+.reply-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.reply-output {
+  margin-top: 16px;
+}
+
+.reply-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+.icon-btn-inline {
+  background: transparent;
+  border: none;
+  color: #718096;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.icon-btn-inline:hover {
+  background: #edf2f7;
+  color: #667eea;
+}
+
+#replyText {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  background: white;
+  color: #2d3748;
+}
+
+#replyText:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.analysis-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analysis-section h3 svg {
   color: #667eea;
 }
 

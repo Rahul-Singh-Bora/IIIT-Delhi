@@ -1,5 +1,5 @@
-// MailGenius Background Service Worker
-console.log('MailGenius: Background service worker initialized');
+// SortIQ Background Service Worker
+console.log('SortIQ: Background service worker initialized');
 
 let currentEmailAnalysis = null;
 
@@ -243,60 +243,106 @@ async function callAnthropic(prompt, apiKey, model) {
   return data.content[0].text;
 }
 
-// Google Gemini API
-async function callGemini(prompt, apiKey, model) {
+// Google Gemini API with retry logic
+async function callGemini(prompt, apiKey, model, retryCount = 0) {
   // Ensure model has the correct format
   const modelPath = model.startsWith('models/') ? model : `models/${model}`;
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${modelPath}:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            {
-              text: prompt
-            }
-          ]
+  
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${modelPath}:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: prompt
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 2000
         }
-      ],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2048
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Gemini API error:', errorText);
+      
+      // Check if it's a rate limit error
+      if (response.status === 429 && retryCount < 2) {
+        console.log(`Rate limited, retrying in 10 seconds... (attempt ${retryCount + 1}/2)`);
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        return callGemini(prompt, apiKey, model, retryCount + 1);
       }
-    })
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Gemini API error:', errorText);
-    throw new Error(`Gemini API request failed: ${errorText}`);
-  }
-
-  const data = await response.json();
-  
-  console.log('Gemini API response:', JSON.stringify(data, null, 2));
-  
-  // Handle different response structures
-  if (data.candidates && data.candidates.length > 0) {
-    const candidate = data.candidates[0];
-    
-    // Check if response was cut off due to token limit
-    if (candidate.finishReason === 'MAX_TOKENS') {
-      console.warn('Response hit max tokens limit');
+      
+      throw new Error(`Gemini API request failed: ${errorText}`);
     }
+
+    const data = await response.json();
     
-    if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
-      const text = candidate.content.parts[0].text;
-      if (text) {
+    // Log full response to Gmail console for debugging
+    console.log('%c🔍 Gemini API Response:', 'color: blue; font-weight: bold');
+    console.log(JSON.stringify(data, null, 2));
+    
+    // Try multiple ways to extract text
+    try {
+      // Method 1: Standard structure
+      if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+        let text = data.candidates[0].content.parts[0].text;
+        
+        // Strip markdown code blocks if present
+        const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (codeBlockMatch) {
+          text = codeBlockMatch[1].trim();
+          console.log('%c✅ Extracted JSON from code block', 'color: green');
+        } else {
+          console.log('%c✅ Text extracted successfully', 'color: green');
+        }
+        
         return text;
       }
+      
+      // Method 2: Check for blocking
+      if (data.candidates && data.candidates[0]) {
+        const candidate = data.candidates[0];
+        console.log('Finish reason:', candidate.finishReason);
+        
+        if (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'RECITATION') {
+          console.error('❌ Blocked by safety filters:', candidate.finishReason);
+          throw new Error(`Response blocked by Gemini: ${candidate.finishReason}`);
+        }
+      }
+      
+      // Method 3: Direct text field
+      if (data.text) {
+        return data.text;
+      }
+      
+      // Method 4: Check for error in response
+      if (data.error) {
+        console.error('❌ Gemini API returned error:', data.error);
+        throw new Error(`Gemini error: ${data.error.message || JSON.stringify(data.error)}`);
+      }
+      
+    } catch (extractError) {
+      console.error('Error extracting text:', extractError);
+      throw extractError;
     }
+    
+    // If nothing worked, log and throw
+    console.error('❌ Could not find text in any expected location');
+    console.error('Available keys:', Object.keys(data));
+    throw new Error('No text content in Gemini response');
+    
+  } catch (error) {
+    console.error('Gemini API call failed:', error);
+    throw error;
   }
-  
-  // If we get here, the response structure is unexpected
-  console.error('Unexpected Gemini response structure:', data);
-  throw new Error('No text content in Gemini response. Check console for details.');
 }
