@@ -40,7 +40,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 async function handleEmailAnalysis(emailData) {
   // Hardcoded Gemini API configuration
   const settings = {
-    apiKey: 'AIzaSyDYmsliWOPYGhzWeadTitSWQSkVhl8nICM',
+    apiKey: 'AIzaSyBcG45cxR7TId8tf5-C86I1dYohFLQH_ME',
     apiProvider: 'gemini',
     modelName: 'gemini-2.5-flash'
   };
@@ -135,7 +135,7 @@ Respond in JSON format:
 async function handleReplyGeneration(emailData, replyType) {
   // Hardcoded Gemini API configuration
   const settings = {
-    apiKey: 'AIzaSyDYmsliWOPYGhzWeadTitSWQSkVhl8nICM',
+    apiKey: 'AIzaSyBcG45cxR7TId8tf5-C86I1dYohFLQH_ME',
     apiProvider: 'gemini',
     modelName: 'gemini-2.5-flash'
   };
