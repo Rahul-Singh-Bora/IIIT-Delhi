@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MailGenius Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+        </svg>
+        MailGenius Settings
+      </h1>
+      <p class="subtitle">Configure your AI-powered email assistant</p>
+    </header>
+
+    <main>
+      <form id="settingsForm">
+        <!-- AI Provider Selection -->
+        <section class="settings-section">
+          <h2>AI Provider</h2>
+          <p class="section-description">Choose which AI service to use for email analysis</p>
+          
+          <div class="radio-group">
+            <label class="radio-card">
+              <input type="radio" name="apiProvider" value="openai" checked>
+              <div class="radio-content">
+                <div class="radio-header">
+                  <span class="radio-title">OpenAI</span>
+                  <span class="badge badge-popular">Popular</span>
+                </div>
+                <p class="radio-description">GPT-4o, GPT-4o-mini, GPT-3.5-turbo</p>
+              </div>
+            </label>
+
+            <label class="radio-card">
+              <input type="radio" name="apiProvider" value="anthropic">
+              <div class="radio-content">
+                <div class="radio-header">
+                  <span class="radio-title">Anthropic Claude</span>
+                  <span class="badge badge-new">Recommended</span>
+                </div>
+                <p class="radio-description">Claude 3.5 Sonnet, Claude 3 Opus, Claude 3 Haiku</p>
+              </div>
+            </label>
+
+            <label class="radio-card">
+              <input type="radio" name="apiProvider" value="gemini">
+              <div class="radio-content">
+                <div class="radio-header">
+                  <span class="radio-title">Google Gemini</span>
+                  <span class="badge badge-free">Free Tier</span>
+                </div>
+                <p class="radio-description">Gemini 1.5 Pro, Gemini 1.5 Flash</p>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <!-- API Configuration -->
+        <section class="settings-section">
+          <h2>API Configuration</h2>
+          
+          <div class="form-group">
+            <label for="apiKey">API Key *</label>
+            <div class="input-with-icon">
+              <input 
+                type="password" 
+                id="apiKey" 
+                placeholder="Enter your API key"
+                required
+                autocomplete="off"
+              >
+              <button type="button" id="toggleApiKey" class="icon-btn-small" title="Show API key" tabindex="-1">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+                </svg>
+              </button>
+            </div>
+            <p class="help-text">Your API key is stored locally and never shared</p>
+          </div>
+
+          <div class="form-group">
+            <label for="modelName">Model Name</label>
+            <input 
+              type="text" 
+              id="modelName" 
+              placeholder="e.g., gpt-4o-mini, claude-3-5-sonnet-20241022, gemini-1.5-flash"
+            >
+            <p class="help-text" id="modelHelp"></p>
+          </div>
+        </section>
+
+        <!-- API Key Instructions -->
+        <section class="settings-section info-section">
+          <h2>How to Get API Keys</h2>
+          
+          <div class="info-card" id="openaiInfo">
+            <h3>OpenAI API Key</h3>
+            <ol>
+              <li>Go to <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a></li>
+              <li>Sign in or create an account</li>
+              <li>Click "Create new secret key"</li>
+              <li>Copy and paste the key above</li>
+            </ol>
+            <p><strong>Recommended model:</strong> <code>gpt-4o-mini</code> (fast and cost-effective)</p>
+          </div>
+
+          <div class="info-card" id="anthropicInfo" style="display: none;">
+            <h3>Anthropic API Key</h3>
+            <ol>
+              <li>Go to <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a></li>
+              <li>Sign in or create an account</li>
+              <li>Navigate to API Keys section</li>
+              <li>Create a new key and copy it</li>
+            </ol>
+            <p><strong>Recommended model:</strong> <code>claude-3-5-sonnet-20241022</code></p>
+          </div>
+
+          <div class="info-card" id="geminiInfo" style="display: none;">
+            <h3>Google Gemini API Key</h3>
+            <ol>
+              <li>Go to <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com/app/apikey</a></li>
+              <li>Sign in with your Google account</li>
+              <li>Click "Create API Key"</li>
+              <li>Copy and paste the key above</li>
+            </ol>
+            <p><strong>Recommended model:</strong> <code>gemini-1.5-flash</code> (free tier available)</p>
+          </div>
+        </section>
+
+        <!-- Save Button -->
+        <div class="actions">
+          <button type="submit" class="primary-btn" id="saveBtn">
+            Save Settings
+          </button>
+          <div id="saveStatus" class="save-status"></div>
+        </div>
+      </form>
+    </main>
+
+    <footer>
+      <p>MailGenius v1.0.0 | <a href="https://github.com/yourusername/mailgenius" target="_blank">GitHub</a></p>
+    </footer>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
