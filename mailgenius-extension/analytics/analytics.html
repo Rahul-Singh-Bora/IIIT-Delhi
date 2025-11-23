@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SortIQ - Analytics Dashboard</title>
+  <link rel="stylesheet" href="analytics.css">
+  <script src="chart.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📊 SortIQ Analytics Dashboard</h1>
+      <button id="refreshBtn" class="refresh-btn">🔄 Refresh</button>
+    </header>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-value" id="totalSenders">0</div>
+        <div class="stat-label">Total Senders</div>
+      </div>
+      
+      <div class="stat-card">
+        <div class="stat-icon">📧</div>
+        <div class="stat-value" id="totalEmails">0</div>
+        <div class="stat-label">Emails Analyzed</div>
+      </div>
+      
+      <div class="stat-card">
+        <div class="stat-icon">⚡</div>
+        <div class="stat-value" id="avgPriority">-</div>
+        <div class="stat-label">Avg Priority</div>
+      </div>
+      
+      <div class="stat-card">
+        <div class="stat-icon">🎯</div>
+        <div class="stat-value" id="totalActions">0</div>
+        <div class="stat-label">Actions Recorded</div>
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h3>Priority Distribution</h3>
+        <canvas id="priorityChart"></canvas>
+      </div>
+      
+      <div class="chart-card">
+        <h3>Action Patterns</h3>
+        <canvas id="actionChart"></canvas>
+      </div>
+    </div>
+
+    <div class="chart-card full-width">
+      <h3>Top Senders by Interaction</h3>
+      <canvas id="sendersChart"></canvas>
+    </div>
+
+    <div class="table-card">
+      <h3>📬 Top Senders</h3>
+      <table id="sendersTable">
+        <thead>
+          <tr>
+            <th>Sender</th>
+            <th>Importance</th>
+            <th>Interactions</th>
+            <th>Last Contact</th>
+          </tr>
+        </thead>
+        <tbody id="sendersTableBody">
+          <tr>
+            <td colspan="4" class="loading">Loading data...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-card">
+      <h3>📈 Recent Priority History</h3>
+      <table id="historyTable">
+        <thead>
+          <tr>
+            <th>Sender</th>
+            <th>Priority</th>
+            <th>Categories</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="historyTableBody">
+          <tr>
+            <td colspan="4" class="loading">Loading data...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="analytics.js"></script>
+</body>
+</html>
