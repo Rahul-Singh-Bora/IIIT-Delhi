@@ -1,9 +1,13 @@
 // SortIQ Popup Script
 document.addEventListener('DOMContentLoaded', async () => {
   const settingsBtn = document.getElementById('settingsBtn');
+  const analyticsBtn = document.getElementById('analyticsBtn');
   const replyButtons = document.querySelectorAll('.reply-btn');
   const copyReplyBtn = document.getElementById('copyReplyBtn');
   const retryBtn = document.getElementById('retryBtn');
+
+  // Initialize analytics
+  initializeAnalytics();
 
   // Get all analyzed emails from storage
   chrome.storage.local.get(['allEmailAnalyses', 'lastAnalysisTime'], (result) => {
@@ -17,6 +21,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Settings button
   settingsBtn.addEventListener('click', () => {
     chrome.runtime.openOptionsPage();
+  });
+
+  // Analytics button
+  analyticsBtn.addEventListener('click', () => {
+    toggleView('analytics');
   });
 
   // Reply generation buttons
@@ -338,4 +347,446 @@ function formatDate(dateString) {
   } else {
     return date.toLocaleDateString();
   }
+}
+
+// View Management
+function toggleView(view) {
+  const mainView = document.getElementById('mainView');
+  const analyticsView = document.getElementById('analyticsView');
+
+  if (view === 'analytics') {
+    mainView.classList.remove('active');
+    analyticsView.style.display = 'block';
+    analyticsView.classList.add('active');
+    updateAnalytics();
+  } else {
+    analyticsView.classList.remove('active');
+    analyticsView.style.display = 'none';
+    mainView.classList.add('active');
+  }
+}
+
+// Analytics Functions
+let priorityChart = null;
+let categoryChart = null;
+let timelineChart = null;
+let senderChart = null;
+let responseTimeChart = null;
+let hourlyChart = null;
+
+function initializeAnalytics() {
+  // Listen for clicks outside analytics view to return to main
+  document.addEventListener('click', (e) => {
+    const analyticsView = document.getElementById('analyticsView');
+    const analyticsBtn = document.getElementById('analyticsBtn');
+    
+    if (analyticsView.classList.contains('active') &&
+        !analyticsView.contains(e.target) &&
+        !analyticsBtn.contains(e.target)) {
+      toggleView('main');
+    }
+  });
+}
+
+function updateAnalytics() {
+  chrome.storage.local.get(['allEmailAnalyses'], (result) => {
+    const analyses = result.allEmailAnalyses || [];
+    
+    // Calculate statistics (even if empty, to show zero state)
+    const stats = analyses.length === 0 ? getEmptyStats() : calculateStats(analyses);
+    
+    // Update stat cards
+    document.getElementById('totalEmails').textContent = stats.total;
+    document.getElementById('highPriorityCount').textContent = stats.highPriority;
+    document.getElementById('actionableCount').textContent = stats.actionRequired;
+
+    // Create charts (even with zero data to show the UI)
+    createPriorityChart(stats.priorityData);
+    createCategoryChart(stats.categoryData);
+    createTimelineChart(stats.timelineData);
+    createSenderChart(stats.senderData);
+    createResponseTimeChart(stats.responseTimeData);
+    createHourlyChart(stats.hourlyData);
+  });
+}
+
+function getEmptyStats() {
+  return {
+    total: 0,
+    highPriority: 0,
+    actionRequired: 0,
+    priorityData: { high: 0, medium: 0, low: 1 },
+    categoryData: { 'No Data': 1 },
+    timelineData: [{ date: new Date().toLocaleDateString(), count: 0 }],
+    senderData: {},
+    responseTimeData: { immediate: 0, within24h: 0, within48h: 0, noRush: 1 },
+    hourlyData: Array(24).fill(0)
+  };
+}
+
+function calculateStats(analyses) {
+  const stats = {
+    total: analyses.length,
+    highPriority: 0,
+    actionRequired: 0,
+    priorityData: { high: 0, medium: 0, low: 0 },
+    categoryData: {},
+    timelineData: [],
+    senderData: {},
+    responseTimeData: { immediate: 0, within24h: 0, within48h: 0, noRush: 0 },
+    hourlyData: Array(24).fill(0)
+  };
+
+  // Group by date
+  const dateGroups = {};
+
+  analyses.forEach(email => {
+    // Priority count
+    const priority = email.priority?.toLowerCase() || 'low';
+    if (priority === 'high' || priority === 'urgent') {
+      stats.highPriority++;
+    }
+    if (priority === 'high' || priority === 'urgent') {
+      stats.priorityData.high++;
+    } else if (priority === 'medium') {
+      stats.priorityData.medium++;
+    } else {
+      stats.priorityData.low++;
+    }
+
+    // Action required
+    if (email.requiresAction) {
+      stats.actionRequired++;
+    }
+
+    // Categories
+    const category = email.category || 'Other';
+    stats.categoryData[category] = (stats.categoryData[category] || 0) + 1;
+
+    // Timeline
+    const date = new Date(email.timestamp || Date.now());
+    const dateKey = date.toLocaleDateString();
+    dateGroups[dateKey] = (dateGroups[dateKey] || 0) + 1;
+
+    // Sender importance
+    const sender = email.sender || 'Unknown';
+    const importance = email.importance || email.priority || 'Medium';
+    if (!stats.senderData[sender]) {
+      stats.senderData[sender] = { count: 0, importance: importance };
+    }
+    stats.senderData[sender].count++;
+
+    // Response time analysis
+    const responseTime = determineResponseTime(email);
+    stats.responseTimeData[responseTime]++;
+
+    // Hourly distribution
+    const hour = date.getHours();
+    stats.hourlyData[hour]++;
+  });
+
+  // Convert timeline to array
+  stats.timelineData = Object.entries(dateGroups)
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .slice(-7); // Last 7 days
+
+  return stats;
+}
+
+function determineResponseTime(email) {
+  const priority = (email.priority || '').toLowerCase();
+  const requiresAction = email.requiresAction;
+  
+  if (priority === 'urgent' || priority === 'high') {
+    return requiresAction ? 'immediate' : 'within24h';
+  } else if (priority === 'medium') {
+    return 'within48h';
+  }
+  return 'noRush';
+}
+
+function createPriorityChart(priorityData) {
+  const ctx = document.getElementById('priorityChart');
+  if (!ctx) return;
+
+  if (priorityChart) {
+    priorityChart.destroy();
+  }
+
+  priorityChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['High Priority', 'Medium Priority', 'Low Priority'],
+      datasets: [{
+        data: [priorityData.high, priorityData.medium, priorityData.low],
+        backgroundColor: [
+          'rgba(239, 68, 68, 0.8)',
+          'rgba(249, 115, 22, 0.8)',
+          'rgba(34, 197, 94, 0.8)'
+        ],
+        borderColor: [
+          'rgba(239, 68, 68, 1)',
+          'rgba(249, 115, 22, 1)',
+          'rgba(34, 197, 94, 1)'
+        ],
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 15,
+            font: { size: 12, weight: '500' }
+          }
+        }
+      }
+    }
+  });
+}
+
+function createCategoryChart(categoryData) {
+  const ctx = document.getElementById('categoryChart');
+  if (!ctx) return;
+
+  if (categoryChart) {
+    categoryChart.destroy();
+  }
+
+  const labels = Object.keys(categoryData).length > 0 ? Object.keys(categoryData) : ['No Data'];
+  const data = Object.keys(categoryData).length > 0 ? Object.values(categoryData) : [1];
+
+  categoryChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Emails',
+        data: data,
+        backgroundColor: 'rgba(236, 72, 153, 0.8)',
+        borderColor: 'rgba(236, 72, 153, 1)',
+        borderWidth: 2,
+        borderRadius: 8
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { stepSize: 1 }
+        }
+      }
+    }
+  });
+}
+
+function createTimelineChart(timelineData) {
+  const ctx = document.getElementById('timelineChart');
+  if (!ctx) return;
+
+  if (timelineChart) {
+    timelineChart.destroy();
+  }
+
+  timelineChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: timelineData.map(d => d.date),
+      datasets: [{
+        label: 'Emails Analyzed',
+        data: timelineData.map(d => d.count),
+        borderColor: 'rgba(59, 130, 246, 1)',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderWidth: 3,
+        fill: true,
+        tension: 0.4,
+        pointBackgroundColor: 'rgba(59, 130, 246, 1)',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
+        pointHoverRadius: 7
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { stepSize: 1 }
+        }
+      }
+    }
+  });
+}
+
+function createSenderChart(senderData) {
+  const ctx = document.getElementById('senderChart');
+  if (!ctx) return;
+
+  if (senderChart) {
+    senderChart.destroy();
+  }
+
+  // Get top 5 senders
+  const topSenders = Object.entries(senderData)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 5);
+
+  const labels = topSenders.length > 0 
+    ? topSenders.map(([sender]) => sender.split('@')[0] || sender)
+    : ['No Data'];
+  const data = topSenders.length > 0 
+    ? topSenders.map(([, info]) => info.count)
+    : [1];
+
+  senderChart = new Chart(ctx, {
+    type: 'polarArea',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: data,
+        backgroundColor: [
+          'rgba(236, 72, 153, 0.7)',
+          'rgba(249, 115, 22, 0.7)',
+          'rgba(234, 179, 8, 0.7)',
+          'rgba(16, 185, 129, 0.7)',
+          'rgba(59, 130, 246, 0.7)'
+        ],
+        borderColor: [
+          'rgba(236, 72, 153, 1)',
+          'rgba(249, 115, 22, 1)',
+          'rgba(234, 179, 8, 1)',
+          'rgba(16, 185, 129, 1)',
+          'rgba(59, 130, 246, 1)'
+        ],
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 10,
+            font: { size: 11, weight: '500' }
+          }
+        }
+      }
+    }
+  });
+}
+
+function createResponseTimeChart(responseTimeData) {
+  const ctx = document.getElementById('responseTimeChart');
+  if (!ctx) return;
+
+  if (responseTimeChart) {
+    responseTimeChart.destroy();
+  }
+
+  responseTimeChart = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels: ['Immediate', 'Within 24h', 'Within 48h', 'No Rush'],
+      datasets: [{
+        data: [
+          responseTimeData.immediate,
+          responseTimeData.within24h,
+          responseTimeData.within48h,
+          responseTimeData.noRush
+        ],
+        backgroundColor: [
+          'rgba(239, 68, 68, 0.8)',
+          'rgba(249, 115, 22, 0.8)',
+          'rgba(234, 179, 8, 0.8)',
+          'rgba(34, 197, 94, 0.8)'
+        ],
+        borderColor: [
+          'rgba(239, 68, 68, 1)',
+          'rgba(249, 115, 22, 1)',
+          'rgba(234, 179, 8, 1)',
+          'rgba(34, 197, 94, 1)'
+        ],
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 12,
+            font: { size: 12, weight: '500' }
+          }
+        }
+      }
+    }
+  });
+}
+
+function createHourlyChart(hourlyData) {
+  const ctx = document.getElementById('hourlyChart');
+  if (!ctx) return;
+
+  if (hourlyChart) {
+    hourlyChart.destroy();
+  }
+
+  const labels = Array.from({ length: 24 }, (_, i) => {
+    const hour = i % 12 || 12;
+    const period = i < 12 ? 'AM' : 'PM';
+    return `${hour}${period}`;
+  });
+
+  hourlyChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Emails Received',
+        data: hourlyData,
+        backgroundColor: 'rgba(139, 92, 246, 0.7)',
+        borderColor: 'rgba(139, 92, 246, 1)',
+        borderWidth: 2,
+        borderRadius: 6
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: { stepSize: 1 }
+        },
+        x: {
+          ticks: {
+            maxRotation: 45,
+            minRotation: 45,
+            font: { size: 10 }
+          }
+        }
+      }
+    }
+  });
 }
