@@ -3,16 +3,19 @@ console.log('SortIQ: Background service worker initialized');
 
 let currentEmailAnalysis = null;
 
+// Import and initialize database (Note: We'll use chrome.storage as fallback since IndexedDB doesn't work in service workers)
+// Service workers have limited IndexedDB access, so we use chrome.storage.local as primary storage
+
 // Listen for messages from content script and popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'analyzeEmail') {
     handleEmailAnalysis(request.emailData).then(analysis => {
       currentEmailAnalysis = analysis;
       
-      // Store analysis and notify content script
-      chrome.storage.local.set({ lastAnalysis: analysis });
-      
-      sendResponse({ success: true, analysis });
+      // Store analysis with context
+      storeAnalysisWithContext(analysis).then(() => {
+        sendResponse({ success: true, analysis });
+      });
     }).catch(error => {
       console.error('Analysis error:', error);
       sendResponse({ success: false, error: error.message });
@@ -36,17 +39,111 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Analyze email using AI
+// Store analysis with context in chrome.storage (IndexedDB alternative)
+async function storeAnalysisWithContext(analysis) {
+  const { emailData, priority, senderImportance, summary, categories } = analysis;
+  
+  // Get existing data
+  const result = await chrome.storage.local.get([
+    'senderProfiles',
+    'priorityHistory',
+    'actionPatterns',
+    'emailContext'
+  ]);
+  
+  const senderProfiles = result.senderProfiles || {};
+  const priorityHistory = result.priorityHistory || [];
+  const emailContext = result.emailContext || {};
+  
+  // Update sender profile
+  const senderKey = emailData.sender;
+  if (!senderProfiles[senderKey]) {
+    senderProfiles[senderKey] = {
+      email: emailData.sender,
+      name: emailData.senderName,
+      importance: senderImportance,
+      interactionCount: 0,
+      lastInteraction: Date.now(),
+      categories: []
+    };
+  }
+  senderProfiles[senderKey].interactionCount++;
+  senderProfiles[senderKey].lastInteraction = Date.now();
+  senderProfiles[senderKey].importance = senderImportance;
+  
+  // Add priority history
+  priorityHistory.unshift({
+    emailId: Date.now() + '-' + Math.random(),
+    senderEmail: emailData.sender,
+    predictedPriority: priority,
+    categories: categories,
+    timestamp: Date.now()
+  });
+  
+  // Keep only last 100 entries
+  if (priorityHistory.length > 100) {
+    priorityHistory.splice(100);
+  }
+  
+  // Store email context for this sender (keep last 5)
+  if (!emailContext[senderKey]) {
+    emailContext[senderKey] = [];
+  }
+  emailContext[senderKey].unshift({
+    subject: emailData.subject,
+    summary: summary,
+    timestamp: Date.now()
+  });
+  if (emailContext[senderKey].length > 5) {
+    emailContext[senderKey].splice(5);
+  }
+  
+  // Save to storage
+  await chrome.storage.local.set({
+    senderProfiles,
+    priorityHistory,
+    emailContext
+  });
+}
+
+// Get context for sender to improve analysis
+async function getSenderContext(senderEmail) {
+  const result = await chrome.storage.local.get([
+    'senderProfiles',
+    'emailContext',
+    'priorityHistory'
+  ]);
+  
+  const profile = result.senderProfiles?.[senderEmail];
+  const context = result.emailContext?.[senderEmail] || [];
+  const history = (result.priorityHistory || []).filter(h => h.senderEmail === senderEmail);
+  
+  return { profile, context, history };
+}
+
+// Analyze email using AI with context memory
 async function handleEmailAnalysis(emailData) {
   // Hardcoded Gemini API configuration
   const settings = {
-    apiKey: 'AIzaSyBcG45cxR7TId8tf5-C86I1dYohFLQH_ME',
+    apiKey: 'AIzaSyABGjmXxXLBKew1xg62PrFmd-00nR6jNr8',
     apiProvider: 'gemini',
     modelName: 'gemini-2.5-flash'
   };
   
   const provider = settings.apiProvider;
   const model = settings.modelName;
+
+  // Get sender context for improved analysis
+  const senderContext = await getSenderContext(emailData.sender);
+  
+  let contextPrompt = '';
+  if (senderContext.profile) {
+    contextPrompt = `\n\nContext about this sender:
+- Name: ${senderContext.profile.name}
+- Previous importance: ${senderContext.profile.importance}
+- Total interactions: ${senderContext.profile.interactionCount}
+- Previous emails summary: ${senderContext.context.map(c => c.subject).join(', ')}`;
+  }
 
   const analysisPrompt = `Analyze this email and provide:
 1. Priority level (High/Medium/Low) with reasoning
@@ -135,7 +232,7 @@ Respond in JSON format:
 async function handleReplyGeneration(emailData, replyType) {
   // Hardcoded Gemini API configuration
   const settings = {
-    apiKey: 'AIzaSyBcG45cxR7TId8tf5-C86I1dYohFLQH_ME',
+    apiKey: 'AIzaSyAiXw_Tci2zRUlERoiCyLQ3ivBA_WQXLi4',
     apiProvider: 'gemini',
     modelName: 'gemini-2.5-flash'
   };
@@ -273,13 +370,34 @@ async function callGemini(prompt, apiKey, model, retryCount = 0) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Gemini API error:', errorText);
+      let errorData;
       
-      // Check if it's a rate limit error
-      if (response.status === 429 && retryCount < 2) {
-        console.log(`Rate limited, retrying in 10 seconds... (attempt ${retryCount + 1}/2)`);
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        return callGemini(prompt, apiKey, model, retryCount + 1);
+      try {
+        errorData = JSON.parse(errorText);
+      } catch (e) {
+        errorData = { error: { message: errorText } };
+      }
+      
+      console.error('Gemini API error:', errorData);
+      
+      // Check if it's a quota exceeded error (429)
+      if (response.status === 429) {
+        const errorMsg = errorData.error?.message || '';
+        
+        // Check if it's daily quota exceeded (not per-minute rate limit)
+        if (errorMsg.includes('quota') && errorMsg.includes('250')) {
+          console.error('🚫 DAILY QUOTA EXCEEDED - Free tier limit: 250 requests/day');
+          throw new Error('Daily API quota exceeded (250 requests). Please wait 24 hours or use a different API key.');
+        }
+        
+        // Per-minute rate limit - retry
+        if (retryCount < 2) {
+          const retryDelay = errorData.error?.details?.find(d => d['@type']?.includes('RetryInfo'))?.retryDelay;
+          const waitTime = retryDelay ? parseInt(retryDelay) * 1000 : 10000;
+          console.log(`⏳ Rate limited, retrying in ${waitTime/1000}s... (attempt ${retryCount + 1}/2)`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          return callGemini(prompt, apiKey, model, retryCount + 1);
+        }
       }
       
       throw new Error(`Gemini API request failed: ${errorText}`);

@@ -1,6 +1,5 @@
 // SortIQ Popup Script
 document.addEventListener('DOMContentLoaded', async () => {
-  const settingsBtn = document.getElementById('settingsBtn');
   const analyticsBtn = document.getElementById('analyticsBtn');
   const replyButtons = document.querySelectorAll('.reply-btn');
   const copyReplyBtn = document.getElementById('copyReplyBtn');
@@ -18,15 +17,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Settings button
-  settingsBtn.addEventListener('click', () => {
-    chrome.runtime.openOptionsPage();
-  });
-
-  // Analytics button
-  analyticsBtn.addEventListener('click', () => {
-    toggleView('analytics');
-  });
+  // Analytics button - open in new tab
+  if (analyticsBtn) {
+    analyticsBtn.addEventListener('click', () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('analytics/analytics.html') });
+    });
+  }
 
   // Reply generation buttons
   replyButtons.forEach(btn => {
