@@ -24,7 +24,7 @@ function initialize() {
   setTimeout(() => {
     console.log('SortIQ: Starting auto-analysis timer...');
     autoAnalyzeEmails();
-  }, 5000); // Wait 5 seconds for Gmail to fully load
+  }, 3000); // Wait 3 seconds for Gmail to fully load
   
   // Listen for messages from background script
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -88,14 +88,22 @@ async function autoAnalyzeEmails() {
             if (response && response.success) {
               resolve(response.analysis);
             } else {
-              console.error('❌ Analysis failed:', response?.error);
-              console.error('Full response:', response);
-              console.error('Email subject:', emailData?.subject);
-              if (chrome.runtime.lastError) {
-                console.error('Chrome runtime error:', chrome.runtime.lastError);
+              const errorMsg = response?.error || 'Unknown error';
+              
+              // User-friendly error messages
+              if (errorMsg.includes('overloaded') || errorMsg.includes('UNAVAILABLE') || errorMsg.includes('503')) {
+                console.warn('⚠️ Gemini service is overloaded. Retrying with exponential backoff...');
+              } else if (errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED')) {
+                console.warn('⚠️ API quota exceeded - trying alternative provider...');
+              } else if (errorMsg.includes('No valid API keys')) {
+                console.error('❌ No API keys configured. Click the extension settings icon to add your API keys.');
+              } else if (errorMsg.includes('All') && errorMsg.includes('failed')) {
+                console.error('❌ All configured AI providers failed:', errorMsg);
+                console.error('💡 Tip: Wait a few minutes and try again, or add an alternative API key in settings.');
+              } else {
+                console.error('❌ Analysis failed:', errorMsg);
               }
-              // Log background console tip
-              console.log('%c💡 TIP: Check service worker console at brave://extensions/ → "Inspect views: service worker"', 'color: orange; font-weight: bold');
+              
               resolve(null);
             }
           });

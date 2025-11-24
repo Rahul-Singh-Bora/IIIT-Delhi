@@ -1,5 +1,11 @@
 // SortIQ Popup Script
 document.addEventListener('DOMContentLoaded', async () => {
+  // Wait for Chart.js to load
+  if (typeof Chart === 'undefined') {
+    console.error('Chart.js not loaded!');
+    return;
+  }
+  
   const settingsBtn = document.getElementById('settingsBtn');
   const analyticsBtn = document.getElementById('analyticsBtn');
   const replyButtons = document.querySelectorAll('.reply-btn');
@@ -389,11 +395,16 @@ function initializeAnalytics() {
 }
 
 function updateAnalytics() {
+  console.log('updateAnalytics called');
+  console.log('Chart.js available:', typeof Chart !== 'undefined');
+  
   chrome.storage.local.get(['allEmailAnalyses'], (result) => {
     const analyses = result.allEmailAnalyses || [];
+    console.log('Loaded analyses:', analyses.length);
     
     // Calculate statistics (even if empty, to show zero state)
     const stats = analyses.length === 0 ? getEmptyStats() : calculateStats(analyses);
+    console.log('Calculated stats:', stats);
     
     // Update stat cards
     document.getElementById('totalEmails').textContent = stats.total;
@@ -401,6 +412,7 @@ function updateAnalytics() {
     document.getElementById('actionableCount').textContent = stats.actionRequired;
 
     // Create charts (even with zero data to show the UI)
+    console.log('Creating charts...');
     createPriorityChart(stats.priorityData);
     createCategoryChart(stats.categoryData);
     createTimelineChart(stats.timelineData);
@@ -508,13 +520,22 @@ function determineResponseTime(email) {
 
 function createPriorityChart(priorityData) {
   const ctx = document.getElementById('priorityChart');
-  if (!ctx) return;
+  if (!ctx) {
+    console.warn('Priority chart canvas not found');
+    return;
+  }
+  
+  if (typeof Chart === 'undefined') {
+    console.error('Chart.js is not loaded');
+    return;
+  }
 
   if (priorityChart) {
     priorityChart.destroy();
   }
 
-  priorityChart = new Chart(ctx, {
+  try {
+    priorityChart = new Chart(ctx, {
     type: 'doughnut',
     data: {
       labels: ['High Priority', 'Medium Priority', 'Low Priority'],
@@ -547,15 +568,23 @@ function createPriorityChart(priorityData) {
       }
     }
   });
+  } catch (error) {
+    console.error('Error creating priority chart:', error);
+    console.warn('Chart.js may not be loaded or canvas element missing');
+  }
 }
 
 function createCategoryChart(categoryData) {
-  const ctx = document.getElementById('categoryChart');
-  if (!ctx) return;
+  try {
+    const ctx = document.getElementById('categoryChart');
+    if (!ctx) {
+      console.warn('Category chart canvas not found');
+      return;
+    }
 
-  if (categoryChart) {
-    categoryChart.destroy();
-  }
+    if (categoryChart) {
+      categoryChart.destroy();
+    }
 
   const labels = Object.keys(categoryData).length > 0 ? Object.keys(categoryData) : ['No Data'];
   const data = Object.keys(categoryData).length > 0 ? Object.values(categoryData) : [1];
@@ -587,15 +616,22 @@ function createCategoryChart(categoryData) {
       }
     }
   });
+  } catch (error) {
+    console.error('Error creating category chart:', error);
+  }
 }
 
 function createTimelineChart(timelineData) {
-  const ctx = document.getElementById('timelineChart');
-  if (!ctx) return;
+  try {
+    const ctx = document.getElementById('timelineChart');
+    if (!ctx) {
+      console.warn('Timeline chart canvas not found');
+      return;
+    }
 
-  if (timelineChart) {
-    timelineChart.destroy();
-  }
+    if (timelineChart) {
+      timelineChart.destroy();
+    }
 
   timelineChart = new Chart(ctx, {
     type: 'line',
@@ -630,15 +666,22 @@ function createTimelineChart(timelineData) {
       }
     }
   });
+  } catch (error) {
+    console.error('Error creating timeline chart:', error);
+  }
 }
 
 function createSenderChart(senderData) {
-  const ctx = document.getElementById('senderChart');
-  if (!ctx) return;
+  try {
+    const ctx = document.getElementById('senderChart');
+    if (!ctx) {
+      console.warn('Sender chart canvas not found');
+      return;
+    }
 
-  if (senderChart) {
-    senderChart.destroy();
-  }
+    if (senderChart) {
+      senderChart.destroy();
+    }
 
   // Get top 5 senders
   const topSenders = Object.entries(senderData)
@@ -689,15 +732,22 @@ function createSenderChart(senderData) {
       }
     }
   });
+  } catch (error) {
+    console.error('Error creating sender chart:', error);
+  }
 }
 
 function createResponseTimeChart(responseTimeData) {
-  const ctx = document.getElementById('responseTimeChart');
-  if (!ctx) return;
+  try {
+    const ctx = document.getElementById('responseTimeChart');
+    if (!ctx) {
+      console.warn('Response time chart canvas not found');
+      return;
+    }
 
-  if (responseTimeChart) {
-    responseTimeChart.destroy();
-  }
+    if (responseTimeChart) {
+      responseTimeChart.destroy();
+    }
 
   responseTimeChart = new Chart(ctx, {
     type: 'pie',
@@ -739,15 +789,22 @@ function createResponseTimeChart(responseTimeData) {
       }
     }
   });
+  } catch (error) {
+    console.error('Error creating response time chart:', error);
+  }
 }
 
 function createHourlyChart(hourlyData) {
-  const ctx = document.getElementById('hourlyChart');
-  if (!ctx) return;
+  try {
+    const ctx = document.getElementById('hourlyChart');
+    if (!ctx) {
+      console.warn('Hourly chart canvas not found');
+      return;
+    }
 
-  if (hourlyChart) {
-    hourlyChart.destroy();
-  }
+    if (hourlyChart) {
+      hourlyChart.destroy();
+    }
 
   const labels = Array.from({ length: 24 }, (_, i) => {
     const hour = i % 12 || 12;
@@ -789,4 +846,7 @@ function createHourlyChart(hourlyData) {
       }
     }
   });
+  } catch (error) {
+    console.error('Error creating hourly chart:', error);
+  }
 }

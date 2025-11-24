@@ -40,8 +40,8 @@ body {
 
 .container {
   background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   min-height: 550px;
   position: relative;
 }
@@ -998,6 +998,7 @@ header h1 {
   margin-bottom: 8px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

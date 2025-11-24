@@ -36,17 +36,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Analyze email using AI
+// Analyze email using AI with automatic fallback
 async function handleEmailAnalysis(emailData) {
-  // Hardcoded Gemini API configuration
-  const settings = {
-    apiKey: 'AIzaSyBcG45cxR7TId8tf5-C86I1dYohFLQH_ME',
-    apiProvider: 'gemini',
-    modelName: 'gemini-2.5-flash'
-  };
-  
-  const provider = settings.apiProvider;
-  const model = settings.modelName;
+  // Try multiple AI providers in order of preference
+  // IMPORTANT: Replace placeholder API keys with your actual keys
+  const providers = [
+    // Option 1: Get new Gemini key from https://aistudio.google.com/apikey
+    { name: 'gemini', apiKey: 'AIzaSyAYoOT4Agi0U6mBhwcjAd38mgDwzbgJGKc', model: 'gemini-2.5-flash' },
+    
+    // Option 2: Add OpenAI key from https://platform.openai.com/api-keys
+    // { name: 'openai', apiKey: 'sk-proj-YOUR_KEY_HERE', model: 'gpt-4o-mini' },
+    
+    // Option 3: Add Anthropic key from https://console.anthropic.com/
+    // { name: 'anthropic', apiKey: 'sk-ant-YOUR_KEY_HERE', model: 'claude-3-5-sonnet-20241022' }
+  ];
 
   const analysisPrompt = `Analyze this email and provide:
 1. Priority level (High/Medium/Low) with reasoning
@@ -74,53 +77,66 @@ Respond in JSON format:
   "categories": ["category1", "category2"]
 }`;
 
-  const analysis = await callAI(analysisPrompt, provider, settings.apiKey, model);
+  // Try providers with fallback
+  let analysis = null;
+  let lastError = null;
+  
+  for (const provider of providers) {
+    // Skip providers with invalid/placeholder API keys
+    if (!provider.apiKey || provider.apiKey.startsWith('YOUR_') || provider.apiKey.length < 20) {
+      console.log(`Skipping ${provider.name} - no valid API key configured`);
+      continue;
+    }
+    
+    try {
+      console.log(`Trying ${provider.name} API...`);
+      analysis = await callAI(analysisPrompt, provider.name, provider.apiKey, provider.model);
+      console.log(`✓ ${provider.name} API succeeded`);
+      break; // Success, exit loop
+    } catch (error) {
+      console.warn(`${provider.name} API failed:`, error.message);
+      lastError = error;
+      // Continue to next provider
+    }
+  }
+  
+  if (!analysis) {
+    const validProviders = providers.filter(p => p.apiKey && !p.apiKey.startsWith('YOUR_') && p.apiKey.length >= 20);
+    if (validProviders.length === 0) {
+      throw new Error('No valid API keys configured. Please add API keys in the extension settings.');
+    }
+    throw new Error(`All configured AI providers failed. Last error: ${lastError?.message}`);
+  }
   
   // Parse JSON response with better error handling
   let parsedAnalysis;
   try {
     parsedAnalysis = JSON.parse(analysis);
   } catch (e) {
-    // Try to extract JSON from markdown code blocks
+    // Try to extract JSON from markdown code blocks (```json ... ```)
     const jsonMatch = analysis.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
     if (jsonMatch) {
       try {
-        parsedAnalysis = JSON.parse(jsonMatch[1]);
+        parsedAnalysis = JSON.parse(jsonMatch[1].trim());
+        console.log('✓ Successfully parsed JSON from markdown code block');
       } catch (e2) {
-        console.error('Failed to parse JSON from code block:', jsonMatch[1]);
-        throw new Error('Failed to parse AI response from code block');
+        console.error('Failed to parse JSON from code block:', e2.message);
+        throw new Error('AI returned invalid JSON in code block');
       }
     } else {
-      // Try to find JSON object in the text
-      const objectMatch = analysis.match(/\{[\s\S]*"priority"[\s\S]*\}/);
+      // Try to find raw JSON object in the text
+      const objectMatch = analysis.match(/\{[\s\S]*?"priority"[\s\S]*?\}/);
       if (objectMatch) {
         try {
           parsedAnalysis = JSON.parse(objectMatch[0]);
+          console.log('✓ Successfully extracted raw JSON from response');
         } catch (e3) {
-          console.error('Failed to parse JSON object:', objectMatch[0]);
-          // Create default structure from text
-          parsedAnalysis = {
-            priority: "Medium",
-            priorityReason: "Unable to analyze",
-            senderImportance: "Medium",
-            importanceReason: "Unable to determine",
-            summary: analysis.substring(0, 200),
-            actionItems: [],
-            categories: ["Email"]
-          };
+          console.error('Failed to parse extracted JSON:', e3.message);
+          throw new Error('AI returned malformed JSON');
         }
       } else {
-        console.error('No JSON found in response:', analysis);
-        // Create default structure
-        parsedAnalysis = {
-          priority: "Medium",
-          priorityReason: "AI response format error",
-          senderImportance: "Medium",
-          importanceReason: "Could not parse response",
-          summary: "Error processing email analysis",
-          actionItems: [],
-          categories: ["Email"]
-        };
+        console.error('No valid JSON found in response:', analysis.substring(0, 500));
+        throw new Error('AI response does not contain valid JSON');
       }
     }
   }
@@ -135,7 +151,7 @@ Respond in JSON format:
 async function handleReplyGeneration(emailData, replyType) {
   // Hardcoded Gemini API configuration
   const settings = {
-    apiKey: 'AIzaSyBcG45cxR7TId8tf5-C86I1dYohFLQH_ME',
+    apiKey: 'AIzaSyAYoOT4Agi0U6mBhwcjAd38mgDwzbgJGKc',
     apiProvider: 'gemini',
     modelName: 'gemini-2.5-flash'
   };
@@ -206,7 +222,14 @@ async function callOpenAI(prompt, apiKey, model) {
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.error?.message || 'OpenAI API request failed');
+    const errorMsg = error.error?.message || 'Gemini API request failed';
+    
+    // Specific handling for quota exhausted
+    if (response.status === 429 || error.error?.status === 'RESOURCE_EXHAUSTED') {
+      throw new Error(`Gemini quota exhausted: ${errorMsg}`);
+    }
+    
+    throw new Error(errorMsg);
   }
 
   const data = await response.json();
@@ -275,10 +298,27 @@ async function callGemini(prompt, apiKey, model, retryCount = 0) {
       const errorText = await response.text();
       console.error('Gemini API error:', errorText);
       
-      // Check if it's a rate limit error
-      if (response.status === 429 && retryCount < 2) {
-        console.log(`Rate limited, retrying in 10 seconds... (attempt ${retryCount + 1}/2)`);
-        await new Promise(resolve => setTimeout(resolve, 10000));
+      // Parse error for better handling
+      let errorData;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch (e) {
+        errorData = { error: { message: errorText } };
+      }
+      
+      // Check if it's a retryable error (rate limit or service unavailable)
+      const isRetryable = response.status === 429 || response.status === 503 || 
+                          errorData.error?.status === 'UNAVAILABLE' ||
+                          errorData.error?.status === 'RESOURCE_EXHAUSTED';
+      
+      if (isRetryable && retryCount < 3) {
+        // Exponential backoff: 2s, 5s, 10s
+        const delays = [2000, 5000, 10000];
+        const delay = delays[retryCount];
+        const reason = response.status === 503 ? 'Service overloaded' : 'Rate limited';
+        
+        console.log(`${reason}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/3)`);
+        await new Promise(resolve => setTimeout(resolve, delay));
         return callGemini(prompt, apiKey, model, retryCount + 1);
       }
       
