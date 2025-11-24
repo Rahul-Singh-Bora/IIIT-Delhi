@@ -3,16 +3,19 @@ console.log('SortIQ: Background service worker initialized');
 
 let currentEmailAnalysis = null;
 
+// Import and initialize database (Note: We'll use chrome.storage as fallback since IndexedDB doesn't work in service workers)
+// Service workers have limited IndexedDB access, so we use chrome.storage.local as primary storage
+
 // Listen for messages from content script and popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'analyzeEmail') {
     handleEmailAnalysis(request.emailData).then(analysis => {
       currentEmailAnalysis = analysis;
       
-      // Store analysis and notify content script
-      chrome.storage.local.set({ lastAnalysis: analysis });
-      
-      sendResponse({ success: true, analysis });
+      // Store analysis with context
+      storeAnalysisWithContext(analysis).then(() => {
+        sendResponse({ success: true, analysis });
+      });
     }).catch(error => {
       console.error('Analysis error:', error);
       sendResponse({ success: false, error: error.message });
@@ -36,20 +39,111 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Analyze email using AI with automatic fallback
+// Store analysis with context in chrome.storage (IndexedDB alternative)
+async function storeAnalysisWithContext(analysis) {
+  const { emailData, priority, senderImportance, summary, categories } = analysis;
+  
+  // Get existing data
+  const result = await chrome.storage.local.get([
+    'senderProfiles',
+    'priorityHistory',
+    'actionPatterns',
+    'emailContext'
+  ]);
+  
+  const senderProfiles = result.senderProfiles || {};
+  const priorityHistory = result.priorityHistory || [];
+  const emailContext = result.emailContext || {};
+  
+  // Update sender profile
+  const senderKey = emailData.sender;
+  if (!senderProfiles[senderKey]) {
+    senderProfiles[senderKey] = {
+      email: emailData.sender,
+      name: emailData.senderName,
+      importance: senderImportance,
+      interactionCount: 0,
+      lastInteraction: Date.now(),
+      categories: []
+    };
+  }
+  senderProfiles[senderKey].interactionCount++;
+  senderProfiles[senderKey].lastInteraction = Date.now();
+  senderProfiles[senderKey].importance = senderImportance;
+  
+  // Add priority history
+  priorityHistory.unshift({
+    emailId: Date.now() + '-' + Math.random(),
+    senderEmail: emailData.sender,
+    predictedPriority: priority,
+    categories: categories,
+    timestamp: Date.now()
+  });
+  
+  // Keep only last 100 entries
+  if (priorityHistory.length > 100) {
+    priorityHistory.splice(100);
+  }
+  
+  // Store email context for this sender (keep last 5)
+  if (!emailContext[senderKey]) {
+    emailContext[senderKey] = [];
+  }
+  emailContext[senderKey].unshift({
+    subject: emailData.subject,
+    summary: summary,
+    timestamp: Date.now()
+  });
+  if (emailContext[senderKey].length > 5) {
+    emailContext[senderKey].splice(5);
+  }
+  
+  // Save to storage
+  await chrome.storage.local.set({
+    senderProfiles,
+    priorityHistory,
+    emailContext
+  });
+}
+
+// Get context for sender to improve analysis
+async function getSenderContext(senderEmail) {
+  const result = await chrome.storage.local.get([
+    'senderProfiles',
+    'emailContext',
+    'priorityHistory'
+  ]);
+  
+  const profile = result.senderProfiles?.[senderEmail];
+  const context = result.emailContext?.[senderEmail] || [];
+  const history = (result.priorityHistory || []).filter(h => h.senderEmail === senderEmail);
+  
+  return { profile, context, history };
+}
+
+// Analyze email using AI with context memory
 async function handleEmailAnalysis(emailData) {
-  // Try multiple AI providers in order of preference
-  // IMPORTANT: Replace placeholder API keys with your actual keys
-  const providers = [
-    // Option 1: Get new Gemini key from https://aistudio.google.com/apikey
-    { name: 'gemini', apiKey: 'AIzaSyAYoOT4Agi0U6mBhwcjAd38mgDwzbgJGKc', model: 'gemini-2.5-flash' },
-    
-    // Option 2: Add OpenAI key from https://platform.openai.com/api-keys
-    // { name: 'openai', apiKey: 'sk-proj-YOUR_KEY_HERE', model: 'gpt-4o-mini' },
-    
-    // Option 3: Add Anthropic key from https://console.anthropic.com/
-    // { name: 'anthropic', apiKey: 'sk-ant-YOUR_KEY_HERE', model: 'claude-3-5-sonnet-20241022' }
-  ];
+  // Hardcoded Gemini API configuration
+  const settings = {
+    apiKey: 'AIzaSyABGjmXxXLBKew1xg62PrFmd-00nR6jNr8',
+    apiProvider: 'gemini',
+    modelName: 'gemini-2.5-flash'
+  };
+  
+  const provider = settings.apiProvider;
+  const model = settings.modelName;
+
+  // Get sender context for improved analysis
+  const senderContext = await getSenderContext(emailData.sender);
+  
+  let contextPrompt = '';
+  if (senderContext.profile) {
+    contextPrompt = `\n\nContext about this sender:
+- Name: ${senderContext.profile.name}
+- Previous importance: ${senderContext.profile.importance}
+- Total interactions: ${senderContext.profile.interactionCount}
+- Previous emails summary: ${senderContext.context.map(c => c.subject).join(', ')}`;
+  }
 
   const analysisPrompt = `Analyze this email and provide:
 1. Priority level (High/Medium/Low) with reasoning
@@ -77,66 +171,53 @@ Respond in JSON format:
   "categories": ["category1", "category2"]
 }`;
 
-  // Try providers with fallback
-  let analysis = null;
-  let lastError = null;
-  
-  for (const provider of providers) {
-    // Skip providers with invalid/placeholder API keys
-    if (!provider.apiKey || provider.apiKey.startsWith('YOUR_') || provider.apiKey.length < 20) {
-      console.log(`Skipping ${provider.name} - no valid API key configured`);
-      continue;
-    }
-    
-    try {
-      console.log(`Trying ${provider.name} API...`);
-      analysis = await callAI(analysisPrompt, provider.name, provider.apiKey, provider.model);
-      console.log(`✓ ${provider.name} API succeeded`);
-      break; // Success, exit loop
-    } catch (error) {
-      console.warn(`${provider.name} API failed:`, error.message);
-      lastError = error;
-      // Continue to next provider
-    }
-  }
-  
-  if (!analysis) {
-    const validProviders = providers.filter(p => p.apiKey && !p.apiKey.startsWith('YOUR_') && p.apiKey.length >= 20);
-    if (validProviders.length === 0) {
-      throw new Error('No valid API keys configured. Please add API keys in the extension settings.');
-    }
-    throw new Error(`All configured AI providers failed. Last error: ${lastError?.message}`);
-  }
+  const analysis = await callAI(analysisPrompt, provider, settings.apiKey, model);
   
   // Parse JSON response with better error handling
   let parsedAnalysis;
   try {
     parsedAnalysis = JSON.parse(analysis);
   } catch (e) {
-    // Try to extract JSON from markdown code blocks (```json ... ```)
+    // Try to extract JSON from markdown code blocks
     const jsonMatch = analysis.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
     if (jsonMatch) {
       try {
-        parsedAnalysis = JSON.parse(jsonMatch[1].trim());
-        console.log('✓ Successfully parsed JSON from markdown code block');
+        parsedAnalysis = JSON.parse(jsonMatch[1]);
       } catch (e2) {
-        console.error('Failed to parse JSON from code block:', e2.message);
-        throw new Error('AI returned invalid JSON in code block');
+        console.error('Failed to parse JSON from code block:', jsonMatch[1]);
+        throw new Error('Failed to parse AI response from code block');
       }
     } else {
-      // Try to find raw JSON object in the text
-      const objectMatch = analysis.match(/\{[\s\S]*?"priority"[\s\S]*?\}/);
+      // Try to find JSON object in the text
+      const objectMatch = analysis.match(/\{[\s\S]*"priority"[\s\S]*\}/);
       if (objectMatch) {
         try {
           parsedAnalysis = JSON.parse(objectMatch[0]);
-          console.log('✓ Successfully extracted raw JSON from response');
         } catch (e3) {
-          console.error('Failed to parse extracted JSON:', e3.message);
-          throw new Error('AI returned malformed JSON');
+          console.error('Failed to parse JSON object:', objectMatch[0]);
+          // Create default structure from text
+          parsedAnalysis = {
+            priority: "Medium",
+            priorityReason: "Unable to analyze",
+            senderImportance: "Medium",
+            importanceReason: "Unable to determine",
+            summary: analysis.substring(0, 200),
+            actionItems: [],
+            categories: ["Email"]
+          };
         }
       } else {
-        console.error('No valid JSON found in response:', analysis.substring(0, 500));
-        throw new Error('AI response does not contain valid JSON');
+        console.error('No JSON found in response:', analysis);
+        // Create default structure
+        parsedAnalysis = {
+          priority: "Medium",
+          priorityReason: "AI response format error",
+          senderImportance: "Medium",
+          importanceReason: "Could not parse response",
+          summary: "Error processing email analysis",
+          actionItems: [],
+          categories: ["Email"]
+        };
       }
     }
   }
@@ -151,7 +232,7 @@ Respond in JSON format:
 async function handleReplyGeneration(emailData, replyType) {
   // Hardcoded Gemini API configuration
   const settings = {
-    apiKey: 'AIzaSyAYoOT4Agi0U6mBhwcjAd38mgDwzbgJGKc',
+    apiKey: 'AIzaSyAiXw_Tci2zRUlERoiCyLQ3ivBA_WQXLi4',
     apiProvider: 'gemini',
     modelName: 'gemini-2.5-flash'
   };
@@ -222,14 +303,7 @@ async function callOpenAI(prompt, apiKey, model) {
 
   if (!response.ok) {
     const error = await response.json();
-    const errorMsg = error.error?.message || 'Gemini API request failed';
-    
-    // Specific handling for quota exhausted
-    if (response.status === 429 || error.error?.status === 'RESOURCE_EXHAUSTED') {
-      throw new Error(`Gemini quota exhausted: ${errorMsg}`);
-    }
-    
-    throw new Error(errorMsg);
+    throw new Error(error.error?.message || 'OpenAI API request failed');
   }
 
   const data = await response.json();
@@ -296,30 +370,45 @@ async function callGemini(prompt, apiKey, model, retryCount = 0) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Gemini API error:', errorText);
-      
-      // Parse error for better handling
       let errorData;
+      
       try {
         errorData = JSON.parse(errorText);
       } catch (e) {
         errorData = { error: { message: errorText } };
       }
       
-      // Check if it's a retryable error (rate limit or service unavailable)
-      const isRetryable = response.status === 429 || response.status === 503 || 
-                          errorData.error?.status === 'UNAVAILABLE' ||
-                          errorData.error?.status === 'RESOURCE_EXHAUSTED';
+      console.error('Gemini API error:', errorData);
       
-      if (isRetryable && retryCount < 3) {
-        // Exponential backoff: 2s, 5s, 10s
-        const delays = [2000, 5000, 10000];
-        const delay = delays[retryCount];
-        const reason = response.status === 503 ? 'Service overloaded' : 'Rate limited';
+      // Check if it's a quota exceeded error (429)
+      if (response.status === 429) {
+        const errorMsg = errorData.error?.message || '';
         
-        console.log(`${reason}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/3)`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        return callGemini(prompt, apiKey, model, retryCount + 1);
+        // Check if it's daily quota exceeded (not per-minute rate limit)
+        if (errorMsg.includes('quota') && errorMsg.includes('250')) {
+          console.error('🚫 DAILY QUOTA EXCEEDED - Free tier limit: 250 requests/day');
+          throw new Error('Daily API quota exceeded (250 requests). Please wait 24 hours or use a different API key.');
+        }
+        
+        // Per-minute rate limit - retry
+        if (retryCount < 3) {
+          const delays = [2000, 5000, 10000];
+          const delay = delays[retryCount];
+          console.log(`⏳ Rate limited, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/3)`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return callGemini(prompt, apiKey, model, retryCount + 1);
+        }
+      }
+      
+      // Check if it's a service unavailable error (503)
+      if (response.status === 503 || errorData.error?.status === 'UNAVAILABLE') {
+        if (retryCount < 3) {
+          const delays = [2000, 5000, 10000];
+          const delay = delays[retryCount];
+          console.log(`Service overloaded, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/3)`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return callGemini(prompt, apiKey, model, retryCount + 1);
+        }
       }
       
       throw new Error(`Gemini API request failed: ${errorText}`);

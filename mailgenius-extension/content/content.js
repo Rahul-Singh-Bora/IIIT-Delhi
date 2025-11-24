@@ -24,7 +24,7 @@ function initialize() {
   setTimeout(() => {
     console.log('SortIQ: Starting auto-analysis timer...');
     autoAnalyzeEmails();
-  }, 3000); // Wait 3 seconds for Gmail to fully load
+  }, 5000); // Wait 5 seconds for Gmail to fully load
   
   // Listen for messages from background script
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -69,8 +69,14 @@ async function autoAnalyzeEmails() {
   // Analyze emails with rate limit: max 5 at a time to stay under 10/min limit
   const BATCH_SIZE = 5;
   const analyses = [];
+  let quotaExceeded = false;
   
   for (let i = 0; i < emailsToAnalyze.length; i += BATCH_SIZE) {
+    if (quotaExceeded) {
+      console.warn('⚠️ Stopped analysis due to quota limit');
+      break;
+    }
+    
     const batch = emailsToAnalyze.slice(i, i + BATCH_SIZE);
     console.log(`📧 Analyzing emails ${i + 1}-${Math.min(i + BATCH_SIZE, emailsToAnalyze.length)} of ${emailsToAnalyze.length}...`);
     
@@ -86,39 +92,62 @@ async function autoAnalyzeEmails() {
             emailData: emailData
           }, (response) => {
             if (response && response.success) {
-              resolve(response.analysis);
+              resolve({ success: true, analysis: response.analysis });
             } else {
-              const errorMsg = response?.error || 'Unknown error';
+              const errorMsg = response?.error || '';
               
               // User-friendly error messages
               if (errorMsg.includes('overloaded') || errorMsg.includes('UNAVAILABLE') || errorMsg.includes('503')) {
                 console.warn('⚠️ Gemini service is overloaded. Retrying with exponential backoff...');
-              } else if (errorMsg.includes('quota') || errorMsg.includes('RESOURCE_EXHAUSTED')) {
-                console.warn('⚠️ API quota exceeded - trying alternative provider...');
-              } else if (errorMsg.includes('No valid API keys')) {
-                console.error('❌ No API keys configured. Click the extension settings icon to add your API keys.');
-              } else if (errorMsg.includes('All') && errorMsg.includes('failed')) {
-                console.error('❌ All configured AI providers failed:', errorMsg);
-                console.error('💡 Tip: Wait a few minutes and try again, or add an alternative API key in settings.');
+                resolve({ success: false, quotaExceeded: false });
+              } else if (errorMsg.includes('quota exceeded') || errorMsg.includes('Daily API quota')) {
+                console.error('🚫 DAILY QUOTA EXCEEDED');
+                console.error('The free tier allows 250 requests per day.');
+                console.error('Options:');
+                console.error('  1. Wait 24 hours for quota reset');
+                console.error('  2. Get a new API key from https://ai.google.dev/');
+                console.error('  3. Upgrade to paid tier for higher limits');
+                quotaExceeded = true;
+                resolve({ success: false, quotaExceeded: true });
               } else {
                 console.error('❌ Analysis failed:', errorMsg);
+                console.error('Email subject:', emailData?.subject);
+                console.error('💡 Tip: Wait a few minutes and try again');
+                resolve({ success: false, quotaExceeded: false });
               }
-              
-              resolve(null);
             }
           });
         });
       }
-      return Promise.resolve(null);
+      return Promise.resolve({ success: false, quotaExceeded: false });
     });
     
     // Wait for batch to complete
     const batchResults = await Promise.all(batchPromises);
-    analyses.push(...batchResults.filter(a => a !== null));
+    
+    // Check if any hit quota limit
+    if (batchResults.some(r => r.quotaExceeded)) {
+      quotaExceeded = true;
+      break;
+    }
+    
+    // Add successful analyses
+    const successfulAnalyses = batchResults
+      .filter(r => r.success)
+      .map(r => r.analysis);
+    analyses.push(...successfulAnalyses);
+    
+    // Stop if no successful analyses in this batch
+    if (successfulAnalyses.length === 0 && i + BATCH_SIZE < emailsToAnalyze.length) {
+      console.warn('⚠️ No successful analyses in batch, stopping...');
+      break;
+    }
     
     // Delay to respect rate limits - shorter delay for 10 emails
-    console.log('⏳ Waiting to respect API rate limits...');
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    if (i + BATCH_SIZE < emailsToAnalyze.length) {
+      console.log('⏳ Waiting to respect API rate limits...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
   }
   
   // Store all analyses
@@ -127,7 +156,13 @@ async function autoAnalyzeEmails() {
     lastAnalysisTime: Date.now()
   });
   
-  console.log(`✓ SortIQ: Completed analysis of ${analyses.length} emails!`);
+  if (quotaExceeded) {
+    console.log(`⚠️ SortIQ: Analysis stopped - daily quota exceeded. Analyzed ${analyses.length} emails.`);
+    console.log('💡 TIP: The API has a daily limit of 250 requests. Analysis will resume after 24 hours.');
+  } else {
+    console.log(`✓ SortIQ: Completed analysis of ${analyses.length} emails!`);
+  }
+  
   isAnalyzing = false;
 }
 
